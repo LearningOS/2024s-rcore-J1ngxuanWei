@@ -50,8 +50,19 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     0
 }
 
+
+use crate::task::{get_syscall_times,get_first_schedule_time};
+use crate::timer::get_time_ms;
+
 /// YOUR JOB: Finish sys_task_info to pass testcases
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info");
-    -1
+    unsafe{
+        (*_ti).status = TaskStatus::Running;
+        for i in 0..MAX_SYSCALL_NUM{
+            (*_ti).syscall_times[i] = get_syscall_times(i);
+        }
+        (*_ti).time = get_time_ms()-get_first_schedule_time();
+    }
+    0
 }
