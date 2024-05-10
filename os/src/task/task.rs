@@ -28,6 +28,11 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// syscall times
+    pub syscall_times: [u32; 500],
+    /// first schedule time
+    pub first_schedule_time: usize,
 }
 
 impl TaskControlBlock {
@@ -63,6 +68,8 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_times: [0; 500],
+            first_schedule_time: 0,
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -95,6 +102,32 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    ///1
+    #[allow(unused)]
+    pub fn mmap(&mut self, _start: usize, _len: usize, _port: usize) -> isize {
+        let mut ma = &mut self.memory_set;
+        let mut perm: MapPermission = MapPermission::U;
+        if _port & 0x1 == 1 {
+            perm.insert(MapPermission::R);
+        }
+        if _port & 0x2 == 2 {
+            perm.insert(MapPermission::W);
+        }
+        if _port & 0x4 == 4 {
+            perm.insert(MapPermission::X);
+        }
+        ma.insert_framed_area(
+            VirtAddr::from(_start),
+            VirtAddr::from(_start + _len),
+            perm,
+        )
+    }
+    ///2
+    #[allow(unused)]
+    pub fn unmmap(&mut self, _start: usize, _len: usize) -> isize {
+        let mut ma = &mut self.memory_set;
+        ma.remove_framed_area(VirtAddr::from(_start), VirtAddr::from(_start + _len))
     }
 }
 
