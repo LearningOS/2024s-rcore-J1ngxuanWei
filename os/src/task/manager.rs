@@ -22,8 +22,31 @@ impl TaskManager {
         self.ready_queue.push_back(task);
     }
     /// Take a process out of the ready queue
+    #[allow(unused)]
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if let Some(task) = self.ready_queue.front() {
+            let mut str: isize = 0;
+            let mut str_sti = isize::MAX;
+            for (i, task) in self.ready_queue.iter().enumerate() {
+                if task.inner_exclusive_access().stride < str_sti {
+                    str_sti = task.inner_exclusive_access().stride;
+                    str = i as isize;
+                }
+            }
+            for i in 0..1000 {
+                if i == str {
+                    break;
+                }
+                let taskk = self.ready_queue.pop_front().unwrap();
+                self.ready_queue.push_back(taskk);
+            }
+            let mut taskk = self.ready_queue.pop_front().unwrap();
+            let pro = taskk.inner_exclusive_access().priority;
+            taskk.inner_exclusive_access().stride += 1000 / pro;
+            Some(taskk)
+        } else {
+            None
+        }
     }
 }
 

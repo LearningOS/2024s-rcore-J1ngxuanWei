@@ -65,6 +65,33 @@ pub fn sys_fork() -> isize {
     new_pid as isize
 }
 
+/// YOUR JOB: Implement spawn.
+/// HINT: fork + exec =/= spawn
+#[allow(unused)]
+pub fn sys_spawn(_path: *const u8) -> isize {
+    trace!(
+        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        current_task().unwrap().pid.0
+    );
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let current_task = current_task().unwrap();
+        let new_task = current_task.spawn(data);
+        let new_pid = new_task.pid.0;
+        // modify trap context of new_task, because it returns immediately after switching
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+        // we do not have to move to next instruction since we have done it before
+        // for child process, fork returns 0
+        trap_cx.x[10] = 0;
+        // add new task to scheduler
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
+}
+
 pub fn sys_exec(path: *const u8) -> isize {
     trace!("kernel:pid[{}] sys_exec", current_task().unwrap().pid.0);
     let token = current_user_token();
@@ -230,21 +257,19 @@ pub fn sys_sbrk(size: i32) -> isize {
     }
 }
 
-/// YOUR JOB: Implement spawn.
-/// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
-}
-
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
     trace!(
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio <=1{
+        return -1;
+    }
+    else {
+        let current_task = current_task().unwrap();
+        let mut inner =current_task.inner_exclusive_access();
+        inner.priority=_prio;
+        _prio
+    }
 }
