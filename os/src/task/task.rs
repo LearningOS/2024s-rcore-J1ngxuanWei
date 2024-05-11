@@ -2,7 +2,7 @@
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,MapPermission};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
@@ -68,6 +68,11 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// syscall times
+    pub syscall_times: [u32; 500],
+    /// first schedule time
+    pub first_schedule_time: usize,
 }
 
 impl TaskControlBlockInner {
@@ -84,6 +89,28 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+    ///1
+    #[allow(unused)]
+    pub fn mmap(&mut self, _start: usize, _len: usize, _port: usize) -> isize {
+        let mut ma = &mut self.memory_set;
+        let mut perm: MapPermission = MapPermission::U;
+        if _port & 0x1 == 1 {
+            perm.insert(MapPermission::R);
+        }
+        if _port & 0x2 == 2 {
+            perm.insert(MapPermission::W);
+        }
+        if _port & 0x4 == 4 {
+            perm.insert(MapPermission::X);
+        }
+        ma.insert_framed_area(VirtAddr::from(_start), VirtAddr::from(_start + _len), perm)
+    }
+    ///2
+    #[allow(unused)]
+    pub fn unmmap(&mut self, _start: usize, _len: usize) -> isize {
+        let mut ma = &mut self.memory_set;
+        ma.remove_framed_area(VirtAddr::from(_start), VirtAddr::from(_start + _len))
     }
 }
 
@@ -118,6 +145,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; 500],
+                    first_schedule_time: 0,
                 })
             },
         };
@@ -191,6 +220,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; 500],
+                    first_schedule_time: 0,
                 })
             },
         });
@@ -235,6 +266,33 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    ///1
+    pub fn add_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        inner.syscall_times[syscall_id] += 1;
+    }
+    ///1
+    pub fn get_syscall_times(&self, syscall_id: usize) -> u32 {
+        let inner = self.inner.exclusive_access();
+        inner.syscall_times[syscall_id]
+    }
+    ///1
+    pub fn get_first_schedule_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.first_schedule_time
+    }
+    ///1
+    #[allow(unused)]
+    pub fn mmap(&self, _start: usize, _len: usize, _port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        inner.mmap(_start, _len, _port)
+    }
+    ///2
+    #[allow(unused)]
+    pub fn unmmap(&self, _start: usize, _len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        inner.unmmap(_start, _len)
     }
 }
 
