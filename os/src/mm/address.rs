@@ -288,3 +288,10 @@ where
 }
 /// a simple range structure for virtual page number
 pub type VPNRange = SimpleRange<VirtPageNum>;
+
+impl VPNRange {
+    /// Get the indexes of the page table entry
+    pub fn conta(&self,s:VirtPageNum,e:VirtPageNum) -> bool {
+        self.l.0 <= s.0 && self.r.0 >= e.0
+    }
+}

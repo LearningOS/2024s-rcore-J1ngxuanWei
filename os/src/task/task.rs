@@ -3,7 +3,7 @@ use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::fs::{File, Stdin, Stdout};
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::mm::{MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
@@ -71,6 +71,15 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// syscall times
+    pub syscall_times: [u32; 500],
+    /// first schedule time
+    pub first_schedule_time: usize,
+    /// priority
+    pub priority: isize,
+    /// stride
+    pub stride: isize,
 }
 
 impl TaskControlBlockInner {
@@ -93,6 +102,28 @@ impl TaskControlBlockInner {
             self.fd_table.push(None);
             self.fd_table.len() - 1
         }
+    }
+    ///1
+    #[allow(unused)]
+    pub fn mmap(&mut self, _start: usize, _len: usize, _port: usize) -> isize {
+        let mut ma = &mut self.memory_set;
+        let mut perm: MapPermission = MapPermission::U;
+        if _port & 0x1 == 1 {
+            perm.insert(MapPermission::R);
+        }
+        if _port & 0x2 == 2 {
+            perm.insert(MapPermission::W);
+        }
+        if _port & 0x4 == 4 {
+            perm.insert(MapPermission::X);
+        }
+        ma.insert_framed_area(VirtAddr::from(_start), VirtAddr::from(_start + _len), perm)
+    }
+    ///2
+    #[allow(unused)]
+    pub fn unmmap(&mut self, _start: usize, _len: usize) -> isize {
+        let mut ma = &mut self.memory_set;
+        ma.remove_framed_area(VirtAddr::from(_start), VirtAddr::from(_start + _len))
     }
 }
 
@@ -135,6 +166,10 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; 500],
+                    first_schedule_time: 0,
+                    priority:16,
+                    stride:0,
                 })
             },
         };
@@ -216,6 +251,10 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; 500],
+                    first_schedule_time: 0,
+                    priority:16,
+                    stride:0,
                 })
             },
         });
@@ -225,6 +264,70 @@ impl TaskControlBlock {
         // **** access child PCB exclusively
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
         trap_cx.kernel_sp = kernel_stack_top;
+        // return
+        task_control_block
+        // **** release child PCB
+        // ---- release parent PCB
+    }
+
+    /// parent process fork the child process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        // ---- access parent PCB exclusively
+        let mut parent_inner = self.inner_exclusive_access();
+        // memory_set with elf program headers/trampoline/trap context/user stack
+        let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
+            .unwrap()
+            .ppn();
+        // alloc a pid and a kernel stack in kernel space
+        let pid_handle = pid_alloc();
+        let kernel_stack = kstack_alloc();
+        let kernel_stack_top = kernel_stack.get_top();
+        // copy fd table
+        let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        for fd in parent_inner.fd_table.iter() {
+            if let Some(file) = fd {
+                new_fd_table.push(Some(file.clone()));
+            } else {
+                new_fd_table.push(None);
+            }
+        }
+        let task_control_block = Arc::new(TaskControlBlock {
+            pid: pid_handle,
+            kernel_stack,
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    trap_cx_ppn,
+                    base_size: user_sp,
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+                    task_status: TaskStatus::Ready,
+                    memory_set,
+                    parent: Some(Arc::downgrade(self)),
+                    children: Vec::new(),
+                    exit_code: 0,
+                    fd_table: new_fd_table,
+                    heap_bottom: parent_inner.heap_bottom,
+                    program_brk: parent_inner.program_brk,
+                    syscall_times: [0; 500],
+                    first_schedule_time: 0,
+                    priority:16,
+                    stride:0,
+                })
+            },
+        });
+
+        // add child
+        parent_inner.children.push(task_control_block.clone());
+        // **** access child PCB exclusively
+        let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
+        *trap_cx = TrapContext::app_init_context(
+            entry_point,
+            user_sp,
+            KERNEL_SPACE.exclusive_access().token(),
+            kernel_stack_top,
+            trap_handler as usize,
+        );
         // return
         task_control_block
         // **** release child PCB
@@ -260,6 +363,33 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    ///1
+    pub fn add_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        inner.syscall_times[syscall_id] += 1;
+    }
+    ///1
+    pub fn get_syscall_times(&self, syscall_id: usize) -> u32 {
+        let inner = self.inner.exclusive_access();
+        inner.syscall_times[syscall_id]
+    }
+    ///1
+    pub fn get_first_schedule_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.first_schedule_time
+    }
+    ///1
+    #[allow(unused)]
+    pub fn mmap(&self, _start: usize, _len: usize, _port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        inner.mmap(_start, _len, _port)
+    }
+    ///2
+    #[allow(unused)]
+    pub fn unmmap(&self, _start: usize, _len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        inner.unmmap(_start, _len)
     }
 }
 

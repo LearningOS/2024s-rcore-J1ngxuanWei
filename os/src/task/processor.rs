@@ -50,6 +50,8 @@ lazy_static! {
     pub static ref PROCESSOR: UPSafeCell<Processor> = unsafe { UPSafeCell::new(Processor::new()) };
 }
 
+use crate::timer::get_time_ms;
+
 ///The main part of process execution and scheduling
 ///Loop `fetch_task` to get the process that needs to run, and switch the process through `__switch`
 pub fn run_tasks() {
@@ -61,6 +63,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.first_schedule_time == 0 {
+                task_inner.first_schedule_time = get_time_ms();
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -107,5 +112,48 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     drop(processor);
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
+    }
+}
+
+/// Add syscall times for current task
+pub fn add_syscall_times(syscall_id: usize) {
+    if let Some(c) = current_task() {
+        c.add_syscall_times(syscall_id);
+    }
+}
+
+/// Get syscall times for current task
+pub fn get_syscall_times(syscall_id: usize) -> u32 {
+    if let Some(c) = current_task() {
+        c.get_syscall_times(syscall_id)
+    } else {
+        0
+    }
+}
+
+/// Get first schedule time for current task
+pub fn get_first_schedule_time() -> usize {
+    if let Some(c) = current_task() {
+        c.get_first_schedule_time()
+    } else {
+        0
+    }
+}
+
+///1
+pub fn mmap(_start: usize, _len: usize, _port: usize) -> isize {
+    if let Some(c) = current_task() {
+        c.mmap(_start, _len, _port)
+    } else {
+        -1
+    }
+}
+
+///2
+pub fn unmmap(_start: usize, _len: usize) -> isize {
+    if let Some(c) = current_task() {
+        c.unmmap(_start, _len)
+    } else {
+        -1
     }
 }
