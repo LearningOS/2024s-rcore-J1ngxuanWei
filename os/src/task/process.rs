@@ -27,6 +27,8 @@ pub struct ProcessControlBlock {
 pub struct ProcessControlBlockInner {
     /// is zombie?
     pub is_zombie: bool,
+    ///
+    pub deadlock: bool,
     /// memory set(address space)
     pub memory_set: MemorySet,
     /// parent process
@@ -49,6 +51,10 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// have sem
+    pub sem_have: Vec<Vec<usize>>,
+    /// need sem
+    pub sem_need: Vec<Vec<usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -82,6 +88,120 @@ impl ProcessControlBlockInner {
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
     }
+    ///1
+    pub fn set_deadlock(&mut self, deadlock: bool) {
+        self.deadlock = deadlock;
+    }
+    ///1
+    pub fn get_sem_have(&mut self) -> Vec<Vec<usize>> {
+        self.sem_have.clone()
+    }
+
+    ///1
+    pub fn get_sem_need(&mut self) -> Vec<Vec<usize>> {
+        self.sem_need.clone()
+    }
+
+    ///2
+    pub fn set_sem(&mut self, id: usize) {
+        while self.sem_have.len() < id + 1 {
+            self.sem_have.push(Vec::new());
+            self.sem_need.push(Vec::new());
+        }
+    }
+    ///2
+    pub fn clear_sem(&mut self, id: usize) {
+        self.sem_have[id].clear();
+        self.sem_need[id].clear();
+    }
+    ///2
+    pub fn add_sem_need(&mut self, tid: usize, sid: usize) {
+        self.sem_need[tid].push(sid);
+    }
+    ///2
+    pub fn add_sem_have(&mut self, tid: usize, sid: usize) {
+        self.sem_have[tid].push(sid);
+    }
+    ///2
+    pub fn rm_sem_need(&mut self, tid: usize, sid: usize) {
+        self.sem_need[tid].retain(|x| x != &sid)
+    }
+    ///2
+    pub fn rm_sem_have(&mut self, tid: usize, sid: usize) {
+        self.sem_have[tid].retain(|x| x != &sid)
+    }
+    ///3
+    #[allow(unused)]
+    pub fn deadlockdect(&self) -> bool {
+        if self.tasks.len() <= 1 {
+            return false;
+        }
+        if !self.deadlock || self.tasks.len() > 4 {
+            return false;
+        }
+        let mut allo = self.sem_have.clone();
+        let mut need = self.sem_need.clone();
+        let len = self.tasks.len();
+        let lens = self.semaphore_list.len();
+        let mut finish: Vec<bool> = vec![false; len];
+        let mut work: Vec<isize> = vec![0; lens];
+        for i in 0..lens {
+            let sem = self.semaphore_list[i].as_ref();
+            if sem.is_none() {
+                continue;
+            }
+            let s = sem.unwrap().as_ref();
+            work[i] = s.get_count();
+        }
+        for i in 0..len {
+            if need[i].is_empty() {
+                finish[i] = true;
+                let aa = allo[i].clone();
+                for v in aa {
+                    work[v] += 1;
+                }
+                allo[i].clear();
+            }
+        }
+        while !is_all_finish(&finish) {
+            let mut fff = true;
+            for i in 0..len {
+                if finish[i] {
+                    continue;
+                }
+                let mut fg = true;
+                let nn = need[i].clone();
+                for n in nn {
+                    if work[n] <= 0 {
+                        fg = false;
+                        break;
+                    }
+                }
+                if fg {
+                    finish[i] = true;
+                    let aa = allo[i].clone();
+                    for v in aa {
+                        work[v] += 1;
+                    }
+                    allo[i].clear();
+                    fff = false;
+                }
+            }
+            if fff {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+pub fn is_all_finish(finish: &Vec<bool>) -> bool {
+    for i in finish {
+        if !i {
+            return false;
+        }
+    }
+    true
 }
 
 impl ProcessControlBlock {
@@ -119,6 +239,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    sem_have: Vec::new(),
+                    sem_need: Vec::new(),
+                    deadlock: false,
                 })
             },
         });
@@ -143,6 +266,8 @@ impl ProcessControlBlock {
         );
         // add main thread to the process
         let mut process_inner = process.inner_exclusive_access();
+        process_inner.sem_have.push(Vec::new());
+        process_inner.sem_need.push(Vec::new());
         process_inner.tasks.push(Some(Arc::clone(&task)));
         drop(process_inner);
         insert_into_pid2process(process.getpid(), Arc::clone(&process));
@@ -245,6 +370,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    sem_have: Vec::new(),
+                    sem_need: Vec::new(),
+                    deadlock: false,
                 })
             },
         });
@@ -267,6 +395,8 @@ impl ProcessControlBlock {
         // attach task to child process
         let mut child_inner = child.inner_exclusive_access();
         child_inner.tasks.push(Some(Arc::clone(&task)));
+        child_inner.sem_have.push(Vec::new());
+        child_inner.sem_need.push(Vec::new());
         drop(child_inner);
         // modify kstack_top in trap_cx of this thread
         let task_inner = task.inner_exclusive_access();

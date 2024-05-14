@@ -1,7 +1,7 @@
 //! Mutex (spin-like and blocking(sleep))
 
 use super::UPSafeCell;
-use crate::task::TaskControlBlock;
+use crate::task::{current_process, TaskControlBlock};
 use crate::task::{block_current_and_run_next, suspend_current_and_run_next};
 use crate::task::{current_task, wakeup_task};
 use alloc::{collections::VecDeque, sync::Arc};
@@ -12,6 +12,8 @@ pub trait Mutex: Sync + Send {
     fn lock(&self);
     /// Unlock the mutex
     fn unlock(&self);
+    ///1
+    fn is_locker(&self) -> bool;
 }
 
 /// Spinlock Mutex struct
@@ -49,6 +51,11 @@ impl Mutex for MutexSpin {
         trace!("kernel: MutexSpin::unlock");
         let mut locked = self.locked.exclusive_access();
         *locked = false;
+    }
+
+    fn is_locker(&self) -> bool {
+        let locked = self.locked.exclusive_access();
+        *locked
     }
 }
 
@@ -101,5 +108,15 @@ impl Mutex for MutexBlocking {
         } else {
             mutex_inner.locked = false;
         }
+    }
+
+    fn is_locker(&self) -> bool {
+        let mutex_inner = self.inner.exclusive_access();
+        let pro=current_process();
+        let len=pro.inner_exclusive_access().tasks.len();
+        if len !=1{
+            return false;
+        }
+        mutex_inner.locked
     }
 }

@@ -30,19 +30,24 @@ impl Semaphore {
     }
 
     /// up operation of semaphore
-    pub fn up(&self) {
+    #[allow(unused)]
+    pub fn up(&self, sid: usize) {
         trace!("kernel: Semaphore::up");
         let mut inner = self.inner.exclusive_access();
         inner.count += 1;
         if inner.count <= 0 {
             if let Some(task) = inner.wait_queue.pop_front() {
+                //let tid = task.inner_exclusive_access().res.as_ref().unwrap().tid;
+                //let process = task.process.upgrade().unwrap();
+                //let mut process_inner = process.inner_exclusive_access();
+                //process_inner.add_sem_have(tid, sid);
                 wakeup_task(task);
             }
         }
     }
 
     /// down operation of semaphore
-    pub fn down(&self) {
+    pub fn down(&self) ->isize{
         trace!("kernel: Semaphore::down");
         let mut inner = self.inner.exclusive_access();
         inner.count -= 1;
@@ -51,5 +56,11 @@ impl Semaphore {
             drop(inner);
             block_current_and_run_next();
         }
+        0
+    }
+
+    ///1
+    pub fn get_count(&self) -> isize {
+        self.inner.exclusive_access().count
     }
 }

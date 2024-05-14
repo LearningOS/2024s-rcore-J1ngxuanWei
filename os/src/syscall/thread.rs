@@ -5,6 +5,7 @@ use crate::{
 };
 use alloc::sync::Arc;
 /// thread create syscall
+#[allow(unused)]
 pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     trace!(
         "kernel:pid[{}] tid[{}] sys_thread_create",
@@ -36,6 +37,7 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     let new_task_tid = new_task_res.tid;
     let mut process_inner = process.inner_exclusive_access();
     // add new thread to current process
+    process_inner.set_sem(new_task_tid);
     let tasks = &mut process_inner.tasks;
     while tasks.len() < new_task_tid + 1 {
         tasks.push(None);
@@ -112,6 +114,7 @@ pub fn sys_waittid(tid: usize) -> i32 {
     if let Some(exit_code) = exit_code {
         // dealloc the exited thread
         process_inner.tasks[tid] = None;
+        process_inner.clear_sem(tid);
         exit_code
     } else {
         // waited thread has not exited
