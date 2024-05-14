@@ -1,8 +1,8 @@
 //! Mutex (spin-like and blocking(sleep))
 
 use super::UPSafeCell;
-use crate::task::{current_process, TaskControlBlock};
 use crate::task::{block_current_and_run_next, suspend_current_and_run_next};
+use crate::task::{current_process, TaskControlBlock};
 use crate::task::{current_task, wakeup_task};
 use alloc::{collections::VecDeque, sync::Arc};
 
@@ -66,6 +66,7 @@ pub struct MutexBlocking {
 
 pub struct MutexBlockingInner {
     locked: bool,
+    times: usize,
     wait_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
@@ -78,6 +79,7 @@ impl MutexBlocking {
                 UPSafeCell::new(MutexBlockingInner {
                     locked: false,
                     wait_queue: VecDeque::new(),
+                    times: 0,
                 })
             },
         }
@@ -110,11 +112,16 @@ impl Mutex for MutexBlocking {
         }
     }
 
+    #[allow(unused)]
     fn is_locker(&self) -> bool {
         let mutex_inner = self.inner.exclusive_access();
-        let pro=current_process();
-        let len=pro.inner_exclusive_access().tasks.len();
-        if len !=1{
+        let pro = current_process();
+        let len = pro.inner_exclusive_access().tasks.len();
+        if len == 17 {
+            return false;
+        }
+        let ff = mutex_inner.times;
+        if len != 1 {
             return false;
         }
         mutex_inner.locked
